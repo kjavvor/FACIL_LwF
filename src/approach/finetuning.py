@@ -58,4 +58,4 @@ class Appr(Inc_Learning_Appr):
         """Returns the loss value"""
         if self.all_out or len(self.exemplars_dataset) > 0:
             return torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
-        return torch.nn.functional.cross_entropy(outputs[t], targets - self.model.task_offset[t])
+        return torch.nn.functional.cross_entropy(outputs[t], (targets - self.model.task_offset[t]).long())
