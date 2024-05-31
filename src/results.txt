@@ -245,3 +245,180 @@ TAg Forg
 ************************************************************************************************************
 [Elapsed time = 0.6 h]
 Done!
+
+
+LWF -------------------------------------------------------------------
+
+============================================================================================================
+Arguments =
+        approach: lwf
+        batch_size: 64
+        clipping: 10000
+        datasets: ['cifar100']
+        eval_on_train: False
+        exp_name: None
+        fix_bn: False
+        gpu: 0
+        gridsearch_tasks: -1
+        keep_existing_head: False
+        last_layer_analysis: False
+        log: ['disk']
+        lr: 0.1
+        lr_factor: 3
+        lr_min: 0.0001
+        lr_patience: 5
+        momentum: 0.0
+        multi_softmax: False
+        nc_first_task: None
+        nepochs: 2
+        network: resnet32
+        no_cudnn_deterministic: False
+        num_tasks: 4
+        num_workers: 4
+        pin_memory: False
+        pretrained: False
+        results_path: ../results
+        save_models: False
+        seed: 0
+        stop_at_task: 0
+        use_valid_only: False
+        warmup_lr_factor: 1.0
+        warmup_nepochs: 0
+        weight_decay: 0.0
+============================================================================================================
+WARNING: [CUDA unavailable] Using CPU instead!
+Approach arguments =
+        T: 2
+        lamb: 1
+============================================================================================================
+Exemplars dataset arguments =
+        exemplar_selection: random
+        num_exemplars: 0
+        num_exemplars_per_class: 0
+============================================================================================================
+WARNING: ../results\cifar100_lwf already exists!
+Files already downloaded and verified
+Files already downloaded and verified
+[(0, 25), (1, 25), (2, 25), (3, 25)]
+************************************************************************************************************
+Task  0
+************************************************************************************************************
+| Epoch   1, time=123.2s | Train: skip eval | Valid: time= 33.9s loss=2.572, TAw acc= 22.5% | *
+| Epoch   2, time=134.6s | Train: skip eval | Valid: time= 26.3s loss=2.493, TAw acc= 23.4% | *
+Rozmiar logits: torch.Size([11250, 25])
+Rozmiar labels: torch.Size([11250])
+Original accuracy before calibration: 22.28%
+C:\Users\kamil\AppData\Local\Programs\Python\Python311\Lib\site-packages\sklearn\linear_model\_logistic.py:460: ConvergenceWarning: lbfgs failed to converge (status=1):        
+STOP: TOTAL NO. of ITERATIONS REACHED LIMIT.
+
+Increase the number of iterations (max_iter) or scale the data as shown in:
+    https://scikit-learn.org/stable/modules/preprocessing.html
+Please also refer to the documentation for alternative solver options:
+    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression       
+  n_iter_i = _check_optimize_result(
+Wymiar calibrated_probs: (11250, 25)
+C:\Users\kamil\OneDrive\Pulpit\PW\sem2\ZZSN\project\FACIL_LwF\src\approach\lwf.py:95: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.clone().detach() or sourceTensor.clone().detach().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  calibrated_acc = (torch.tensor(calibrated_probs).argmax(dim=1) == labels).float().mean().item()
+Calibrated accuracy with platt method: 31.99%
+------------------------------------------------------------------------------------------------------------
+>>> Test on task  0 : loss=2.505 | TAw acc= 23.1%, forg=  0.0%| TAg acc= 23.1%, forg=  0.0% <<<
+Save at ../results\cifar100_lwf
+************************************************************************************************************
+Task  1
+************************************************************************************************************
+| Epoch   1, time=140.9s | Train: skip eval | Valid: time= 22.0s loss=5.522, TAw acc= 23.1% | *
+| Epoch   2, time=120.1s | Train: skip eval | Valid: time= 21.1s loss=5.473, TAw acc= 27.4% | *
+Rozmiar logits: torch.Size([11250, 50])
+Rozmiar labels: torch.Size([11250])
+Original accuracy before calibration: 18.12%
+C:\Users\kamil\AppData\Local\Programs\Python\Python311\Lib\site-packages\sklearn\linear_model\_logistic.py:460: ConvergenceWarning: lbfgs failed to converge (status=1):        
+STOP: TOTAL NO. of ITERATIONS REACHED LIMIT.
+
+Increase the number of iterations (max_iter) or scale the data as shown in:
+    https://scikit-learn.org/stable/modules/preprocessing.html
+Please also refer to the documentation for alternative solver options:
+    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression       
+  n_iter_i = _check_optimize_result(
+Wymiar calibrated_probs: (11250, 25)
+C:\Users\kamil\OneDrive\Pulpit\PW\sem2\ZZSN\project\FACIL_LwF\src\approach\lwf.py:95: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.clone().detach() or sourceTensor.clone().detach().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  calibrated_acc = (torch.tensor(calibrated_probs).argmax(dim=1) == labels).float().mean().item()
+Calibrated accuracy with platt method: 0.00%
+------------------------------------------------------------------------------------------------------------
+>>> Test on task  0 : loss=2.768 | TAw acc= 17.0%, forg=  6.1%| TAg acc=  6.9%, forg= 16.2% <<<
+>>> Test on task  1 : loss=5.422 | TAw acc= 27.5%, forg=  0.0%| TAg acc= 22.0%, forg=  0.0% <<<
+Save at ../results\cifar100_lwf
+************************************************************************************************************
+Task  2
+************************************************************************************************************
+| Epoch   1, time=145.4s | Train: skip eval | Valid: time= 32.6s loss=6.265, TAw acc= 23.4% | *
+| Epoch   2, time=126.3s | Train: skip eval | Valid: time= 38.9s loss=6.080, TAw acc= 30.5% | *
+Rozmiar logits: torch.Size([11250, 75])
+Rozmiar labels: torch.Size([11250])
+Original accuracy before calibration: 21.07%
+C:\Users\kamil\AppData\Local\Programs\Python\Python311\Lib\site-packages\sklearn\linear_model\_logistic.py:460: ConvergenceWarning: lbfgs failed to converge (status=1):        
+STOP: TOTAL NO. of ITERATIONS REACHED LIMIT.
+
+Increase the number of iterations (max_iter) or scale the data as shown in:
+    https://scikit-learn.org/stable/modules/preprocessing.html
+Please also refer to the documentation for alternative solver options:
+    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression       
+  n_iter_i = _check_optimize_result(
+Wymiar calibrated_probs: (11250, 25)
+C:\Users\kamil\OneDrive\Pulpit\PW\sem2\ZZSN\project\FACIL_LwF\src\approach\lwf.py:95: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.clone().detach() or sourceTensor.clone().detach().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  calibrated_acc = (torch.tensor(calibrated_probs).argmax(dim=1) == labels).float().mean().item()
+Calibrated accuracy with platt method: 0.00%
+------------------------------------------------------------------------------------------------------------
+>>> Test on task  0 : loss=2.838 | TAw acc= 16.5%, forg=  6.6%| TAg acc=  3.2%, forg= 19.9% <<<
+>>> Test on task  1 : loss=5.539 | TAw acc= 23.6%, forg=  3.9%| TAg acc=  8.5%, forg= 13.5% <<<
+>>> Test on task  2 : loss=6.121 | TAw acc= 28.5%, forg=  0.0%| TAg acc= 23.9%, forg=  0.0% <<<
+Save at ../results\cifar100_lwf
+************************************************************************************************************
+Task  3
+************************************************************************************************************
+| Epoch   1, time=170.5s | Train: skip eval | Valid: time= 35.1s loss=6.539, TAw acc= 27.8% | *
+| Epoch   2, time=180.9s | Train: skip eval | Valid: time= 48.5s loss=6.427, TAw acc= 33.5% | *
+Rozmiar logits: torch.Size([11250, 100])
+Rozmiar labels: torch.Size([11250])
+Original accuracy before calibration: 24.87%
+C:\Users\kamil\AppData\Local\Programs\Python\Python311\Lib\site-packages\sklearn\linear_model\_logistic.py:460: ConvergenceWarning: lbfgs failed to converge (status=1):        
+STOP: TOTAL NO. of ITERATIONS REACHED LIMIT.
+
+Increase the number of iterations (max_iter) or scale the data as shown in:
+    https://scikit-learn.org/stable/modules/preprocessing.html
+Please also refer to the documentation for alternative solver options:
+    https://scikit-learn.org/stable/modules/linear_model.html#logistic-regression       
+  n_iter_i = _check_optimize_result(
+Wymiar calibrated_probs: (11250, 25)
+C:\Users\kamil\OneDrive\Pulpit\PW\sem2\ZZSN\project\FACIL_LwF\src\approach\lwf.py:95: UserWarning: To copy construct from a tensor, it is recommended to use sourceTensor.clone().detach() or sourceTensor.clone().detach().requires_grad_(True), rather than torch.tensor(sourceTensor).
+  calibrated_acc = (torch.tensor(calibrated_probs).argmax(dim=1) == labels).float().mean().item()
+Calibrated accuracy with platt method: 0.00%
+------------------------------------------------------------------------------------------------------------
+>>> Test on task  0 : loss=2.823 | TAw acc= 17.6%, forg=  5.5%| TAg acc=  1.1%, forg= 22.0% <<<
+>>> Test on task  1 : loss=5.739 | TAw acc= 17.8%, forg=  9.7%| TAg acc=  1.4%, forg= 20.6% <<<
+>>> Test on task  2 : loss=6.334 | TAw acc= 22.5%, forg=  6.0%| TAg acc=  7.8%, forg= 16.2% <<<
+>>> Test on task  3 : loss=6.431 | TAw acc= 32.6%, forg=  0.0%| TAg acc= 28.0%, forg=  0.0% <<<
+Save at ../results\cifar100_lwf
+************************************************************************************************************
+TAw Acc
+         23.1%   0.0%   0.0%   0.0%     Avg.: 23.1%
+********************
+TAg Acc
+         23.1%   0.0%   0.0%   0.0%     Avg.: 23.1%
+          6.9%  22.0%   0.0%   0.0%     Avg.: 14.5%
+          3.2%   8.5%  23.9%   0.0%     Avg.: 11.9%
+          1.1%   1.4%   7.8%  28.0%     Avg.:  9.6%
+************************************************************************************************************
+TAw Forg
+          0.0%   0.0%   0.0%   0.0%
+          6.1%   0.0%   0.0%   0.0%     Avg.:  6.1%
+          6.6%   3.9%   0.0%   0.0%     Avg.:  5.3%
+          5.5%   9.7%   6.0%   0.0%     Avg.:  7.1%
+************************************************************************************************************
+TAg Forg
+          0.0%   0.0%   0.0%   0.0%
+         16.2%   0.0%   0.0%   0.0%     Avg.: 16.2%
+         19.9%  13.5%   0.0%   0.0%     Avg.: 16.7%
+         22.0%  20.6%  16.2%   0.0%     Avg.: 19.6%
+************************************************************************************************************
+[Elapsed time = 0.5 h]
+Done!
