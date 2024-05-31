@@ -4,6 +4,9 @@ from argparse import ArgumentParser
 from .incremental_learning import Inc_Learning_Appr
 from datasets.exemplars_dataset import ExemplarsDataset
 from calibration import PlattScaling, IsotonicCalibration, TemperatureScaling
+from sklearn.preprocessing import StandardScaler
+import numpy as np
+
 
 class Appr(Inc_Learning_Appr):
     """Class implementing the Learning Without Forgetting (LwF) approach
@@ -61,6 +64,8 @@ class Appr(Inc_Learning_Appr):
         self.model_old.freeze_all()
         self.calibrate(trn_loader, method='platt')  # Można zmienić na 'temperature' lub 'isotonic'
 
+
+
     def calibrate(self, data_loader, method='platt'):
         self.model.eval()
         logits, labels = self.collect_logits_labels(data_loader)
@@ -72,6 +77,10 @@ class Appr(Inc_Learning_Appr):
         # Store original accuracy before calibration
         original_acc = (logits.argmax(dim=1) == labels).float().mean().item()
         print(f'Original accuracy before calibration: {original_acc * 100:.2f}%')
+
+        # Normalizacja danych
+        scaler = StandardScaler()
+        logits = scaler.fit_transform(logits.cpu().numpy())
 
         if method == 'platt':
             self.calibrator = PlattScaling()
@@ -86,17 +95,19 @@ class Appr(Inc_Learning_Appr):
             raise ValueError("Invalid calibration method")
 
         if method in ['platt', 'isotonic']:
-            self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy())
-            calibrated_probs = self.calibrator.predict_proba(logits.cpu().numpy())
-
+            self.calibrator.fit(logits, labels.cpu().numpy())
+            calibrated_probs = self.calibrator.predict_proba(logits)
+        
+        # Ensure calibrated_probs is 2-dimensional
+        if len(calibrated_probs.shape) == 1:
+            calibrated_probs = np.expand_dims(calibrated_probs, axis=1)
+        
         # Debugging information
         print(f'Wymiar calibrated_probs: {calibrated_probs.shape}')
 
         # Evaluate accuracy after calibration
         calibrated_acc = (torch.tensor(calibrated_probs).argmax(dim=1) == labels).float().mean().item()
         print(f'Calibrated accuracy with {method} method: {calibrated_acc * 100:.2f}%')
-
-
 
 
 

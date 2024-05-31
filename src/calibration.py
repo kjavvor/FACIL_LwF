@@ -7,26 +7,23 @@ from sklearn.preprocessing import LabelBinarizer
 
 class PlattScaling:
     def __init__(self):
-        self.model = LogisticRegression()
+        self.model = LogisticRegression(max_iter=1000)  # dodanie max_iter=1000
 
     def fit(self, logits, labels):
         self.model.fit(logits, labels)
 
     def predict_proba(self, logits):
-        return self.model.predict_proba(logits)
+        return self.model.predict_proba(logits)[:, 1]
 
 class IsotonicCalibration:
     def __init__(self):
         self.model = IsotonicRegression(out_of_bounds='clip')
 
     def fit(self, logits, labels):
-        logits = logits.max(axis=1)
         self.model.fit(logits, labels)
 
     def predict_proba(self, logits):
-        logits = logits.max(axis=1)
-        probs = self.model.transform(logits)
-        return probs
+        return self.model.transform(logits)
 
 class TemperatureScaling(nn.Module):
     def __init__(self):
