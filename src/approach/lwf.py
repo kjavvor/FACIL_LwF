@@ -1,7 +1,7 @@
 import torch
 from copy import deepcopy
 from argparse import ArgumentParser
-from approach.incremental_learning import Inc_Learning_Appr
+from .incremental_learning import Inc_Learning_Appr
 from datasets.exemplars_dataset import ExemplarsDataset
 from calibration import PlattScaling, IsotonicCalibration, TemperatureScaling
 
@@ -69,20 +69,33 @@ class Appr(Inc_Learning_Appr):
 
         if method == 'platt':
             calibrator = PlattScaling()
+            # Spłaszczenie logits i labels
+            logits_flat = logits.view(-1, logits.size(-1))
+            labels_flat = labels.view(-1)
+            calibrator.fit(logits_flat.cpu().numpy(), labels_flat.cpu().numpy())
         elif method == 'temperature':
             calibrator = TemperatureScaling()
             calibrator.set_temperature(logits, labels)
         elif method == 'isotonic':
             calibrator = IsotonicCalibration()
+            calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy())
         else:
             raise ValueError(f'Unknown calibration method: {method}')
         
-        calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy())
         self.calibrator = calibrator
 
         calibrated_probs = self.calibrator.predict_proba(logits.cpu().numpy())
+        
+        # Debugowanie wymiarów calibrated_probs
+        print(f'Wymiar calibrated_probs: {calibrated_probs.shape}')
+        
+        if method == 'platt':
+            calibrated_probs = torch.tensor(calibrated_probs)
+
         calibrated_acc = (torch.tensor(calibrated_probs).argmax(dim=1) == labels).float().mean().item()
         print(f'Calibrated accuracy with {method} method: {calibrated_acc * 100:.2f}%')
+
+
 
     def collect_logits_labels(self, data_loader):
         logits_list, labels_list = [], []
@@ -90,15 +103,27 @@ class Appr(Inc_Learning_Appr):
             for inputs, targets in data_loader:
                 inputs, targets = inputs.to(self.device), targets.to(self.device)
                 outputs = self.model(inputs)
-                if isinstance(outputs, torch.Tensor):
-                    logits_list.append(outputs)
-                else:
-                    logits_list.extend(outputs)
-                if isinstance(targets, torch.Tensor):
-                    labels_list.append(targets)
-                else:
-                    labels_list.extend(targets)
-        return torch.cat(logits_list), torch.cat(labels_list)
+                # Upewnijmy się, że outputs jest tensorem
+                if isinstance(outputs, list):
+                    outputs = torch.cat(outputs, dim=1)
+                logits_list.append(outputs)
+                labels_list.append(targets)
+        
+        # Teraz upewnijmy się, że każdy element w logits_list i labels_list jest tensorami
+        logits_list = [logit if isinstance(logit, torch.Tensor) else torch.tensor(logit) for logit in logits_list]
+        labels_list = [label if isinstance(label, torch.Tensor) else torch.tensor(label) for label in labels_list]
+        
+        logits = torch.cat(logits_list)
+        labels = torch.cat(labels_list)
+        
+        # Debugowanie rozmiarów logits i labels
+        print(f'Rozmiar logits: {logits.size()}')
+        print(f'Rozmiar labels: {labels.size()}')
+
+        return logits, labels
+
+
+
 
     def train_epoch(self, t, trn_loader):
         self.model.train()
