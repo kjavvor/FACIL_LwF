@@ -61,39 +61,43 @@ class Appr(Inc_Learning_Appr):
         self.model_old.freeze_all()
         self.calibrate(trn_loader, method='platt')  # Można zmienić na 'temperature' lub 'isotonic'
 
-    def calibrate(self, trn_loader, method='platt'):
-        logits, labels = self.collect_logits_labels(trn_loader)
-        original_probs = torch.softmax(logits, dim=1)
-        original_acc = (original_probs.argmax(dim=1) == labels).float().mean().item()
+    def calibrate(self, data_loader, method='platt'):
+        self.model.eval()
+        logits, labels = self.collect_logits_labels(data_loader)
+        
+        # Debugging information
+        print(f'Rozmiar logits: {logits.size()}')
+        print(f'Rozmiar labels: {labels.size()}')
+
+        # Store original accuracy before calibration
+        original_acc = (logits.argmax(dim=1) == labels).float().mean().item()
         print(f'Original accuracy before calibration: {original_acc * 100:.2f}%')
 
         if method == 'platt':
-            calibrator = PlattScaling()
-            # Spłaszczenie logits i labels
-            logits_flat = logits.view(-1, logits.size(-1))
-            labels_flat = labels.view(-1)
-            calibrator.fit(logits_flat.cpu().numpy(), labels_flat.cpu().numpy())
-        elif method == 'temperature':
-            calibrator = TemperatureScaling()
-            calibrator.set_temperature(logits, labels)
+            self.calibrator = PlattScaling()
         elif method == 'isotonic':
-            calibrator = IsotonicCalibration()
-            calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy())
+            self.calibrator = IsotonicCalibration()
+        elif method == 'temperature':
+            self.calibrator = TemperatureScaling()
+            self.calibrator.set_temperature(logits, labels)
+            calibrated_logits = self.calibrator.temperature_scale(logits)
+            calibrated_probs = torch.nn.functional.softmax(calibrated_logits, dim=1).cpu().numpy()
         else:
-            raise ValueError(f'Unknown calibration method: {method}')
-        
-        self.calibrator = calibrator
+            raise ValueError("Invalid calibration method")
 
-        calibrated_probs = self.calibrator.predict_proba(logits.cpu().numpy())
-        
-        # Debugowanie wymiarów calibrated_probs
+        if method in ['platt', 'isotonic']:
+            self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy())
+            calibrated_probs = self.calibrator.predict_proba(logits.cpu().numpy())
+
+        # Debugging information
         print(f'Wymiar calibrated_probs: {calibrated_probs.shape}')
-        
-        if method == 'platt':
-            calibrated_probs = torch.tensor(calibrated_probs)
 
+        # Evaluate accuracy after calibration
         calibrated_acc = (torch.tensor(calibrated_probs).argmax(dim=1) == labels).float().mean().item()
         print(f'Calibrated accuracy with {method} method: {calibrated_acc * 100:.2f}%')
+
+
+
 
 
 
