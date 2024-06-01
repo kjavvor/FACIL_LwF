@@ -54,7 +54,7 @@ class Inc_Learning_Appr:
         """Main train structure"""
         self.pre_train_process(t, trn_loader)
         self.train_loop(t, trn_loader, val_loader)
-        self.post_train_process(t, trn_loader)
+        self.post_train_process(t, trn_loader, val_loader)
 
     def pre_train_process(self, t, trn_loader):
         """Runs before training all epochs of the task (before the train session)"""
@@ -156,7 +156,7 @@ class Inc_Learning_Appr:
             print()
         self.model.set_state_dict(best_model)
 
-    def post_train_process(self, t, trn_loader):
+    def post_train_process(self, t, trn_loader, val_loader):
         """Runs after training all the epochs of the task (after the train session)"""
         pass
 
@@ -194,20 +194,28 @@ class Inc_Learning_Appr:
 
     def calculate_metrics(self, outputs, targets):
         """Contains the main Task-Aware and Task-Agnostic metrics"""
-        pred = torch.zeros_like(targets.to(self.device))
+        targets = targets.to(self.device)  
+        pred = torch.zeros_like(targets)  
+
         # Task-Aware Multi-Head
         for m in range(len(pred)):
-            this_task = (self.model.task_cls.cumsum(0) <= targets[m]).sum()
-            pred[m] = outputs[this_task][m].argmax() + self.model.task_offset[this_task]
-        hits_taw = (pred == targets.to(self.device)).float()
+            # Ensure model.task_cls is on the correct device before operation
+            task_cls_cumsum = self.model.task_cls.cumsum(0).to(self.device)
+            this_task = (task_cls_cumsum <= targets[m]).sum().item()  # Ensure comparison on the same device
+            pred[m] = outputs[this_task][m].argmax() + self.model.task_offset[this_task].to(self.device)  # Adjust offset device
+
+        hits_taw = (pred == targets).float()
+
         # Task-Agnostic Multi-Head
         if self.multi_softmax:
             outputs = [torch.nn.functional.log_softmax(output, dim=1) for output in outputs]
             pred = torch.cat(outputs, dim=1).argmax(1)
         else:
             pred = torch.cat(outputs, dim=1).argmax(1)
-        hits_tag = (pred == targets.to(self.device)).float()
+
+        hits_tag = (pred == targets).float()  # Ensure comparison is on device
         return hits_taw, hits_tag
+
 
     def criterion(self, t, outputs, targets):
         """Returns the loss value"""
