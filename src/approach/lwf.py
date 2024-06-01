@@ -23,6 +23,7 @@ class Appr(Inc_Learning_Appr):
         self.lamb = lamb
         self.T = T
         self.calibrator = None
+        self.exemplars_dataset = exemplars_dataset if exemplars_dataset is not None else []
 
     @staticmethod
     def exemplars_dataset_class():
@@ -64,8 +65,6 @@ class Appr(Inc_Learning_Appr):
         self.model_old.freeze_all()
         self.calibrate(trn_loader, method='platt')  # Można zmienić na 'temperature' lub 'isotonic'
 
-
-
     def calibrate(self, data_loader, method='platt'):
         self.model.eval()
         logits, labels = self.collect_logits_labels(data_loader)
@@ -84,33 +83,37 @@ class Appr(Inc_Learning_Appr):
 
         if method == 'platt':
             self.calibrator = PlattScaling()
+            self.calibrator.fit(logits, labels.cpu().numpy())
+            calibrated_probs = self.calibrator.predict_proba(logits)
+            # Ensure calibrated_probs is 2-dimensional
+            if len(calibrated_probs.shape) == 1:
+                calibrated_probs = np.expand_dims(calibrated_probs, axis=1)
         elif method == 'isotonic':
             self.calibrator = IsotonicCalibration()
+            self.calibrator.fit(logits, labels.cpu().numpy())
+            calibrated_probs = self.calibrator.predict_proba(logits)
+            # Ensure calibrated_probs is 2-dimensional
+            if len(calibrated_probs.shape) == 1:
+                calibrated_probs = np.expand_dims(calibrated_probs, axis=1)
         elif method == 'temperature':
             self.calibrator = TemperatureScaling()
-            self.calibrator.set_temperature(logits, labels)
-            calibrated_logits = self.calibrator.temperature_scale(logits)
+            self.calibrator.set_temperature(torch.tensor(logits), torch.tensor(labels))
+            calibrated_logits = self.calibrator.temperature_scale(torch.tensor(logits))
             calibrated_probs = torch.nn.functional.softmax(calibrated_logits, dim=1).cpu().numpy()
         else:
             raise ValueError("Invalid calibration method")
-
-        if method in ['platt', 'isotonic']:
-            self.calibrator.fit(logits, labels.cpu().numpy())
-            calibrated_probs = self.calibrator.predict_proba(logits)
         
-        # Ensure calibrated_probs is 2-dimensional
-        if len(calibrated_probs.shape) == 1:
-            calibrated_probs = np.expand_dims(calibrated_probs, axis=1)
+        # Ensure calibrated_probs has the right dimensions for classification
+        num_classes = logits.shape[1]
+        if method in ['platt', 'isotonic']:
+            calibrated_probs = np.tile(calibrated_probs, (1, num_classes))
         
         # Debugging information
         print(f'Wymiar calibrated_probs: {calibrated_probs.shape}')
 
         # Evaluate accuracy after calibration
-        calibrated_acc = (torch.tensor(calibrated_probs).argmax(dim=1) == labels).float().mean().item()
+        calibrated_acc = (torch.tensor(calibrated_probs).argmax(dim=1) == torch.tensor(labels)).float().mean().item()
         print(f'Calibrated accuracy with {method} method: {calibrated_acc * 100:.2f}%')
-
-
-
 
     def collect_logits_labels(self, data_loader):
         logits_list, labels_list = [], []
@@ -137,16 +140,13 @@ class Appr(Inc_Learning_Appr):
 
         return logits, labels
 
-
-
-
     def train_epoch(self, t, trn_loader):
         self.model.train()
         if self.fix_bn and t > 0:
             self.model.freeze_bn()
         for images, targets in trn_loader:
             targets_old = None
-            if t > 0:
+            if t > 0 and self.model_old is not None:
                 targets_old = self.model_old(images.to(self.device))
             outputs = self.model(images.to(self.device))
             loss = self.criterion(t, outputs, targets.to(self.device), targets_old)
@@ -189,9 +189,9 @@ class Appr(Inc_Learning_Appr):
 
     def criterion(self, t, outputs, targets, outputs_old=None):
         loss = 0
-        if t > 0:
+        if t > 0 and outputs_old is not None:
             loss += self.lamb * self.cross_entropy(torch.cat(outputs[:t], dim=1),
                                                    torch.cat(outputs_old[:t], dim=1), exp=1.0 / self.T)
-        if len(self.exemplars_dataset) > 0:
+        if self.exemplars_dataset is not None and len(self.exemplars_dataset) > 0:
             return loss + torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
         return loss + torch.nn.functional.cross_entropy(outputs[t], (targets - self.model.task_offset[t]).long())

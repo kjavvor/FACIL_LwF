@@ -7,7 +7,7 @@ from sklearn.preprocessing import LabelBinarizer
 
 class PlattScaling:
     def __init__(self):
-        self.model = LogisticRegression(max_iter=1000)  # dodanie max_iter=1000
+        self.model = LogisticRegression(max_iter=1000)
 
     def fit(self, logits, labels):
         self.model.fit(logits, labels)
@@ -34,8 +34,7 @@ class TemperatureScaling(nn.Module):
         return self.temperature_scale(logits)
 
     def temperature_scale(self, logits):
-        # Expand temperature to match the size of logits
-        temperature = self.temperature.unsqueeze(1).expand(logits.size(0), logits.size(1))
+        temperature = self.temperature.expand(logits.size(1))
         return logits / temperature
 
     def set_temperature(self, logits, labels):
