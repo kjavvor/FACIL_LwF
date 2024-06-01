@@ -1,8 +1,14 @@
 import torch
 from copy import deepcopy
 from argparse import ArgumentParser
+import numpy as np
+import traceback
 
-from .incremental_learning import Inc_Learning_Appr
+import sys
+sys.path.append('D:\studia\zzsn\ZZSN\FACIL_LwF\src')
+
+from approach.calibration1 import PlattScaling, IsotonicCalibration, TemperatureScaling 
+from approach.incremental_learning import Inc_Learning_Appr
 from datasets.exemplars_dataset import ExemplarsDataset
 
 
@@ -16,13 +22,18 @@ class Appr(Inc_Learning_Appr):
     #  method or the compared Less Forgetting Learning (see Table 2(b))."
     def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
                  momentum=0, wd=0, multi_softmax=False, wu_nepochs=0, wu_lr_factor=1, fix_bn=False, eval_on_train=False,
-                 logger=None, exemplars_dataset=None, lamb=1, T=2):
+                 logger=None, exemplars_dataset=None, lamb=1, T=2, calibrate=None):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
                                    multi_softmax, wu_nepochs, wu_lr_factor, fix_bn, eval_on_train, logger,
                                    exemplars_dataset)
         self.model_old = None
         self.lamb = lamb
         self.T = T
+        self.calibrate = calibrate
+        if self.calibrate:
+            self.temperature_scaling = TemperatureScaling(self.model)
+            self.platt_scaling = PlattScaling(self.model.taskcla[-1][1])
+            self.isotonic_calibration = IsotonicCalibration()
 
     @staticmethod
     def exemplars_dataset_class():
@@ -54,7 +65,7 @@ class Appr(Inc_Learning_Appr):
 
     def train_loop(self, t, trn_loader, val_loader):
         """Contains the epochs loop"""
-
+    
         # add exemplars to train_loader
         if len(self.exemplars_dataset) > 0 and t > 0:
             trn_loader = torch.utils.data.DataLoader(trn_loader.dataset + self.exemplars_dataset,
@@ -68,14 +79,38 @@ class Appr(Inc_Learning_Appr):
 
         # EXEMPLAR MANAGEMENT -- select training subset
         self.exemplars_dataset.collect_exemplars(self.model, trn_loader, val_loader.dataset.transform)
-
-    def post_train_process(self, t, trn_loader):
-        """Runs after training all the epochs of the task (after the train session)"""
-
+        
+            
+    def post_train_process(self, t, trn_loader, val_loader):
+        """Handle post-training including saving the model and calibrating."""
         # Restore best and save model for future tasks
         self.model_old = deepcopy(self.model)
         self.model_old.eval()
         self.model_old.freeze_all()
+        print(f"Model_old updated after task {t}")
+            
+        super().post_train_process(t, trn_loader, val_loader)
+
+        # Collect logits and labels from the validation set for calibration
+        if self.calibrate:
+            logits, labels = self.collect_logits_labels(val_loader)
+            self.temperature_scaling.set_temperature(logits, labels)
+            self.platt_scaling.fit(logits.cpu().numpy(), labels.cpu().numpy())
+            self.isotonic_calibration.fit(logits.cpu().numpy(), labels.cpu().numpy())
+            print("Calibration successfully applied after completing training.")
+
+
+    def collect_logits_labels(self, loader):
+        """Collect logits and labels from the loader for calibration purposes."""
+        self.model.eval()
+        all_logits, all_labels = [], []
+        with torch.no_grad():
+            for images, targets in loader:
+                images, targets = images.to(self.device), targets.to(self.device)
+                logits = self.model(images)
+                all_logits.append(logits)
+                all_labels.append(targets)
+        return torch.cat(all_logits), torch.cat(all_labels)
 
     def train_epoch(self, t, trn_loader):
         """Runs a single epoch"""
@@ -83,21 +118,21 @@ class Appr(Inc_Learning_Appr):
         if self.fix_bn and t > 0:
             self.model.freeze_bn()
         for images, targets in trn_loader:
-            # Forward old model
-            targets_old = None
-            if t > 0:
-                targets_old = self.model_old(images.to(self.device))
-            # Forward current model
-            outputs = self.model(images.to(self.device))
-            loss = self.criterion(t, outputs, targets.to(self.device), targets_old)
-            # Backward
+            images, targets = images.to(self.device), targets.to(self.device)
+            outputs = self.model(images)
+            outputs_old = None
+            if t > 0 and self.model_old is not None:
+                outputs_old = self.model_old(images)
+            if outputs_old is None and t > 0:
+                raise ValueError(f"Outputs_old was not generated even though t={t} and model_old is set")
+            loss = self.criterion(t, outputs, targets, outputs_old)
             self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clipgrad)
             self.optimizer.step()
 
     def eval(self, t, val_loader):
-        """Contains the evaluation code"""
+        """Evaluation without applying real-time calibration; used during training."""
         with torch.no_grad():
             total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
             self.model.eval()
@@ -135,12 +170,37 @@ class Appr(Inc_Learning_Appr):
 
     def criterion(self, t, outputs, targets, outputs_old=None):
         """Returns the loss value"""
+        if t > 0 and outputs_old is None:
+            print(f"Debug: t={t}, outputs_old is None, model_old is {'set' if self.model_old else 'not set'}")
+            raise ValueError("Outputs_old must be initialized for task index > 0")
         loss = 0
         if t > 0:
             # Knowledge distillation loss for all previous tasks
             loss += self.lamb * self.cross_entropy(torch.cat(outputs[:t], dim=1),
                                                    torch.cat(outputs_old[:t], dim=1), exp=1.0 / self.T)
         # Current cross-entropy loss -- with exemplars use all heads
+        targets = targets.long()
         if len(self.exemplars_dataset) > 0:
             return loss + torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
         return loss + torch.nn.functional.cross_entropy(outputs[t], targets - self.model.task_offset[t])
+        
+    # def eval(self, t, val_loader):
+    #     """Contains the evaluation code"""
+    #     with torch.no_grad():
+    #         total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
+    #         self.model.eval()
+    #         for images, targets in val_loader:
+    #             # Forward old model
+    #             targets_old = None
+    #             if t > 0:
+    #                 targets_old = self.model_old(images.to(self.device))
+    #             # Forward current model
+    #             outputs = self.model(images.to(self.device))
+    #             loss = self.criterion(t, outputs, targets.to(self.device), targets_old)
+    #             hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
+    #             # Log
+    #             total_loss += loss.data.cpu().numpy().item() * len(targets)
+    #             total_acc_taw += hits_taw.sum().data.cpu().numpy().item()
+    #             total_acc_tag += hits_tag.sum().data.cpu().numpy().item()
+    #             total_num += len(targets)
+    #     return total_loss / total_num, total_acc_taw / total_num, total_acc_tag / total_num
