@@ -1,2 +1,2 @@
 # Ignorowanie katalogu środowiska wirtualnego Pythona
-venv/
+myenv/
