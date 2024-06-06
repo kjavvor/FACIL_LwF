@@ -91,6 +91,11 @@ def main(argv=None):
                         help='Fix batch normalization after first task (default=%(default)s)')
     parser.add_argument('--eval-on-train', action='store_true',
                         help='Show train loss and accuracy (default=%(default)s)')
+    
+    # calibration method
+    parser.add_argument('--calibration-method', default=None, type=str, choices=['temperature', 'platt', 'isotonic'],
+                    help='Calibration method to apply after training (default=%(default)s)')
+
     # gridsearch args
     parser.add_argument('--gridsearch-tasks', default=-1, type=int,
                         help='Number of tasks to apply GridSearch (-1: all tasks) (default=%(default)s)')

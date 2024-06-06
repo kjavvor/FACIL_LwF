@@ -22,7 +22,7 @@ class Appr(Inc_Learning_Appr):
     #  method or the compared Less Forgetting Learning (see Table 2(b))."
     def __init__(self, model, device, nepochs=100, lr=0.05, lr_min=1e-4, lr_factor=3, lr_patience=5, clipgrad=10000,
                  momentum=0, wd=0, multi_softmax=False, wu_nepochs=0, wu_lr_factor=1, fix_bn=False, eval_on_train=False,
-                 logger=None, exemplars_dataset=None, lamb=1, T=2, calibrate=None):
+                 logger=None, exemplars_dataset=None, lamb=1, T=2, calibrate=None, calibration_method=None):
         super(Appr, self).__init__(model, device, nepochs, lr, lr_min, lr_factor, lr_patience, clipgrad, momentum, wd,
                                    multi_softmax, wu_nepochs, wu_lr_factor, fix_bn, eval_on_train, logger,
                                    exemplars_dataset)
@@ -30,10 +30,16 @@ class Appr(Inc_Learning_Appr):
         self.lamb = lamb
         self.T = T
         self.calibrate = calibrate
+        self.calibration_method = calibration_method
         if self.calibrate:
-            self.temperature_scaling = TemperatureScaling(self.model)
-            self.platt_scaling = PlattScaling(self.model.taskcla[-1][1])
-            self.isotonic_calibration = IsotonicCalibration()
+            if self.calibration_method == 'temperature':
+                self.calibrator = TemperatureScaling(self.model)
+            elif self.calibration_method == 'platt':
+                self.calibrator = PlattScaling(self.model.taskcla[-1][1])
+            elif self.calibration_method == 'isotonic':
+                self.calibrator = IsotonicCalibration()
+            else:
+                self.calibrator = None
 
     @staticmethod
     def exemplars_dataset_class():
@@ -92,12 +98,15 @@ class Appr(Inc_Learning_Appr):
         super().post_train_process(t, trn_loader, val_loader)
 
         # Collect logits and labels from the validation set for calibration
-        if self.calibrate:
+        if self.calibrate and self.calibrator:
             logits, labels = self.collect_logits_labels(val_loader)
-            self.temperature_scaling.set_temperature(logits, labels)
-            self.platt_scaling.fit(logits.cpu().numpy(), labels.cpu().numpy())
-            self.isotonic_calibration.fit(logits.cpu().numpy(), labels.cpu().numpy())
-            print("Calibration successfully applied after completing training.")
+            if self.calibration_method == 'temperature':
+                self.calibrator.set_temperature(logits, labels)
+            elif self.calibration_method == 'platt':
+                self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy())
+            elif self.calibration_method == 'isotonic':
+                self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy())
+            print(f"{self.calibration_method.capitalize()} calibration successfully applied after completing training.")
 
 
     def collect_logits_labels(self, loader):
