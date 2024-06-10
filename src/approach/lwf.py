@@ -34,7 +34,7 @@ class Appr(Inc_Learning_Appr):
         self.calibrator = None 
         if self.calibrate == 1:
             if self.calibration_method == 'temperature':
-                self.calibrator = TemperatureScaling(self.model)
+                self.calibrator = TemperatureScaling(self.model, device)
             elif self.calibration_method == 'platt':
                 self.calibrator = PlattScaling()
             elif self.calibration_method == 'isotonic':
