@@ -8,12 +8,11 @@ import numpy as np
 class TemperatureScaling:
     def __init__(self, model, device):
         self.model = model
-        self.temperature = nn.Parameter(torch.ones(1).to(device))  # Ensures temperature is on the right device
+        self.temperature = nn.Parameter(torch.ones(1).to(device))
 
     def set_temperature(self, logits, labels):
-        # Ensure logits and labels are on the same device as temperature and that labels are long
         logits = logits.to(self.temperature.device)
-        labels = labels.to(self.temperature.device).long()  # Convert labels to long explicitly
+        labels = labels.to(self.temperature.device).long()
 
         nll_criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.LBFGS([self.temperature], lr=0.01, max_iter=50, line_search_fn='strong_wolfe')
@@ -28,7 +27,6 @@ class TemperatureScaling:
 
     def predict_proba(self, logits):
         logits = logits.to(self.temperature.device)
-        # Calculate softmax at the adjusted temperature
         return F.softmax(logits / self.temperature, dim=1)
 
 class PlattScaling:
