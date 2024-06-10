@@ -24,7 +24,7 @@ def main(argv=None):
     # miscellaneous args
     parser.add_argument('--gpu', type=int, default=0,
                         help='GPU (default=%(default)s)')
-    parser.add_argument('--results-path', type=str, default='../results',
+    parser.add_argument('--results-path', type=str, default='./results',
                         help='Results path (default=%(default)s)')
     parser.add_argument('--exp-name', default=None, type=str,
                         help='Experiment name (default=%(default)s)')
@@ -47,7 +47,7 @@ def main(argv=None):
                         help='Copy Tensors into CUDA pinned memory before returning them (default=%(default)s)')
     parser.add_argument('--batch-size', default=64, type=int, required=False,
                         help='Number of samples per batch to load (default=%(default)s)')
-    parser.add_argument('--num-tasks', default=4, type=int, required=False,
+    parser.add_argument('--num-tasks', default=1, type=int, required=False,
                         help='Number of tasks per dataset (default=%(default)s)')
     parser.add_argument('--nc-first-task', default=None, type=int, required=False,
                         help='Number of classes of the first task (default=%(default)s)')
@@ -65,13 +65,13 @@ def main(argv=None):
     # training args
     parser.add_argument('--approach', default='lwf', type=str, choices=approach.__all__,
                     help='Learning approach used (default=%(default)s)', metavar="APPROACH")
-    parser.add_argument('--nepochs', default=3, type=int, required=False,
+    parser.add_argument('--nepochs', default=2, type=int, required=False,
                         help='Number of epochs per training session (default=%(default)s)')
     parser.add_argument('--lr', default=0.1, type=float, required=False,
                         help='Starting learning rate (default=%(default)s)')
-    parser.add_argument('--lr-min', default=1e-4, type=float, required=False,
+    parser.add_argument('--lr-min', default=1e-7, type=float, required=False,
                         help='Minimum learning rate (default=%(default)s)')
-    parser.add_argument('--lr-factor', default=3, type=float, required=False,
+    parser.add_argument('--lr-factor', default=2, type=float, required=False,
                         help='Learning rate decreasing factor (default=%(default)s)')
     parser.add_argument('--lr-patience', default=5, type=int, required=False,
                         help='Maximum patience to wait before decreasing learning rate (default=%(default)s)')
@@ -94,6 +94,12 @@ def main(argv=None):
     # gridsearch args
     parser.add_argument('--gridsearch-tasks', default=-1, type=int,
                         help='Number of tasks to apply GridSearch (-1: all tasks) (default=%(default)s)')
+    
+    # calibration method
+    parser.add_argument('--calibrate', type=int, choices=[0, 1], default=1,
+                    help='Enable calibration after training: 0 for no, 1 for yes (default=%(default)s)')
+    parser.add_argument('--calibration-method', default='platt', type=str, choices=['temperature', 'platt', 'isotonic'],
+                    help='Calibration method to apply after training (default=%(default)s)')
 
     # Args -- Incremental Learning Framework
     args, extra_args = parser.parse_known_args(argv)
@@ -101,7 +107,8 @@ def main(argv=None):
     base_kwargs = dict(nepochs=args.nepochs, lr=args.lr, lr_min=args.lr_min, lr_factor=args.lr_factor,
                        lr_patience=args.lr_patience, clipgrad=args.clipping, momentum=args.momentum,
                        wd=args.weight_decay, multi_softmax=args.multi_softmax, wu_nepochs=args.warmup_nepochs,
-                       wu_lr_factor=args.warmup_lr_factor, fix_bn=args.fix_bn, eval_on_train=args.eval_on_train)
+                       wu_lr_factor=args.warmup_lr_factor, fix_bn=args.fix_bn, eval_on_train=args.eval_on_train, 
+                       calibrate=args.calibrate, calibration_method=args.calibration_method)
 
     if args.no_cudnn_deterministic:
         print('WARNING: CUDNN Deterministic will be disabled.')

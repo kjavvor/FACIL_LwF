@@ -28,18 +28,29 @@ class TemperatureScaling:
         return F.softmax(logits / self.temperature, dim=1)
 
 class PlattScaling:
-    def __init__(self, num_classes):
-        self.models = [LogisticRegression() for _ in range(num_classes)]
+    """Platt scaling to calibrate probabilities for multi-class outputs."""
+    def __init__(self):
+        self.models = []
 
     def fit(self, logits, labels):
-        for i in range(len(self.models)):
+        """Fit logistic regression models for each class based on logits."""
+        if logits.ndim != 2:
+            raise ValueError("Logits must be a 2D array.")
+        num_classes = logits.shape[1]
+        self.models = [LogisticRegression() for _ in range(num_classes)]
+        for i in range(num_classes):
             class_logits = logits[:, i].reshape(-1, 1)
             class_labels = (labels == i).astype(int)
             self.models[i].fit(class_logits, class_labels)
 
     def predict_proba(self, logits):
-        probas = np.array([model.predict_proba(logits[:, i].reshape(-1, 1))[:, 1]
-                           for i, model in enumerate(self.models)]).T
+        """Predict class probabilities using the fitted logistic regression models."""
+        if not self.models:
+            raise RuntimeError("Models have not been fitted yet.")
+        if logits.shape[1] != len(self.models):
+            raise ValueError("Logit dimensions do not match the number of fitted models.")
+        probas = np.array([self.models[i].predict_proba(logits[:, i].reshape(-1, 1))[:, 1]
+                           for i in range(len(self.models))]).T
         return probas
 
 class IsotonicCalibration:
