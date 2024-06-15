@@ -195,23 +195,25 @@ class Inc_Learning_Appr:
     def calculate_metrics(self, outputs, targets):
         """Contains the main Task-Aware and Task-Agnostic metrics"""
         targets = targets.to(self.device)  
-        pred = torch.zeros_like(targets)  
+        pred = torch.zeros_like(targets)
+
+        # print("Number of outputs:", len(outputs))  # Debug: Check number of output tensors
+        # print("Outputs shapes:", [o.shape for o in outputs])  # Debug: Print shape of each output tensor
 
         # Task-Aware Multi-Head
         for m in range(len(pred)):
-            # Ensure model.task_cls is on the correct device before operation
             task_cls_cumsum = self.model.task_cls.cumsum(0).to(self.device)
-            this_task = (task_cls_cumsum <= targets[m]).sum().item()  # Ensure comparison on the same device
-            pred[m] = outputs[this_task][m].argmax() + self.model.task_offset[this_task].to(self.device)  # Adjust offset device
+            this_task = (task_cls_cumsum <= targets[m]).sum().item()  # Debug: Check task index calculation
+            # print(f"Target {m}: {targets[m]}, This task: {this_task}, Task offset: {self.model.task_offset[this_task]}")
+
+            pred[m] = outputs[this_task][m].argmax() + self.model.task_offset[this_task]  # Adjust offset device
 
         hits_taw = (pred == targets).float()
 
         # Task-Agnostic Multi-Head
         if self.multi_softmax:
             outputs = [torch.nn.functional.log_softmax(output, dim=1) for output in outputs]
-            pred = torch.cat(outputs, dim=1).argmax(1)
-        else:
-            pred = torch.cat(outputs, dim=1).argmax(1)
+        pred = torch.cat(outputs, dim=1).argmax(1)
 
         hits_tag = (pred == targets).float()  # Ensure comparison is on device
         return hits_taw, hits_tag

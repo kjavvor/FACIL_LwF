@@ -7,7 +7,7 @@ import traceback
 import sys
 sys.path.append('D:\studia\zzsn\ZZSN\FACIL_LwF\src')
 
-from approach.calibration1 import PlattScaling, IsotonicCalibration, TemperatureScaling 
+from approach.calibration1 import PlattScaling, IsotonicCalibration, EnsembleTemperatureScaling
 from approach.incremental_learning import Inc_Learning_Appr
 from datasets.exemplars_dataset import ExemplarsDataset
 
@@ -34,7 +34,7 @@ class Appr(Inc_Learning_Appr):
         self.calibrator = None 
         if self.calibrate == 1:
             if self.calibration_method == 'temperature':
-                self.calibrator = TemperatureScaling(self.model, device)
+                self.calibrator = EnsembleTemperatureScaling(num_models=20)
             elif self.calibration_method == 'platt':
                 self.calibrator = PlattScaling()
             elif self.calibration_method == 'isotonic':
@@ -101,13 +101,12 @@ class Appr(Inc_Learning_Appr):
         if self.calibrator and self.calibration_method:
             logits, labels = self.collect_logits_labels(val_loader)
             if self.calibration_method == 'temperature':
-                self.calibrator.set_temperature(logits, labels)
+                self.calibrator.fit(logits, labels.long(), t)
             elif self.calibration_method == 'platt':
-                self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy())
+                self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy(), t)
             elif self.calibration_method == 'isotonic':
-                self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy())
-            print(f"{self.calibration_method.capitalize()} calibration successfully applied after completing training.")
-            
+                self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy(), t)
+
         super().post_train_process(t, trn_loader, val_loader)
 
 
@@ -127,6 +126,9 @@ class Appr(Inc_Learning_Appr):
 
                 all_logits.append(logits.detach())
                 all_labels.append(targets.detach())
+
+        if len(all_logits) == 0:
+            return torch.tensor([]), torch.tensor([])
 
         return torch.cat(all_logits), torch.cat(all_labels)
 
@@ -155,19 +157,42 @@ class Appr(Inc_Learning_Appr):
             total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
             self.model.eval()
             for images, targets in val_loader:
+                images = images.to(self.device)
+                targets = targets.to(self.device)
+
                 # Forward old model
                 targets_old = None
                 if t > 0:
                     targets_old = self.model_old(images.to(self.device))
+
                 # Forward current model
-                outputs = self.model(images.to(self.device))
-                loss = self.criterion(t, outputs, targets.to(self.device), targets_old)
-                hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
-                # Log
-                total_loss += loss.data.cpu().numpy().item() * len(targets)
-                total_acc_taw += hits_taw.sum().data.cpu().numpy().item()
-                total_acc_tag += hits_tag.sum().data.cpu().numpy().item()
+                logits = self.model(images)
+
+                # Debugging information
+                print(f"Task {t}, Logits from model: {logits[:5]}")
+                print(f"Task {t}, Targets: {targets[:5]}")
+
+                # Compute loss using logits (calibration does not affect loss calculation)
+                loss = self.criterion(t, logits, targets, targets_old)
+
+                # Apply calibration if available and fitted
+                if self.calibrator and self.calibrator.is_fitted(t):
+                    print(f"***CALIBRATION MODE*** Task ID: {t}")
+                    probabilities = self.calibrator.predict_proba(logits, t, device=self.device)
+                    for i, prob in enumerate(probabilities):
+                        print(f"Probability {i} after calibration: {prob[:5]}")
+                    hits_taw, hits_tag = self.calculate_metrics(probabilities, targets)
+                else:
+                    hits_taw, hits_tag = self.calculate_metrics(logits, targets)
+
+                # Accumulate metrics
+                total_loss += loss.item() * len(targets)
+                total_acc_taw += hits_taw.sum().item()
+                total_acc_tag += hits_tag.sum().item()
                 total_num += len(targets)
+
+                print(f"Task {t}, Hits TAw: {hits_taw.sum().item()}, Hits TAg: {hits_tag.sum().item()}")
+
         return total_loss / total_num, total_acc_taw / total_num, total_acc_tag / total_num
 
     def cross_entropy(self, outputs, targets, exp=1.0, size_average=True, eps=1e-5):
@@ -198,27 +223,13 @@ class Appr(Inc_Learning_Appr):
                                                    torch.cat(outputs_old[:t], dim=1), exp=1.0 / self.T)
         # Current cross-entropy loss -- with exemplars use all heads
         targets = targets.long()
+
+        # print("Debugging Info:")
+        # print(f"Outputs tensor shape: {outputs.shape}")
+        # print(f"Targets shape: {targets.shape}")
+        # print(f"Outputs tensor type: {outputs.dtype}, device: {outputs.device}")
+        # print(f"Targets type: {targets.dtype}, device: {targets.device}")
+
         if len(self.exemplars_dataset) > 0:
             return loss + torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
         return loss + torch.nn.functional.cross_entropy(outputs[t], targets - self.model.task_offset[t])
-        
-    # def eval(self, t, val_loader):
-    #     """Contains the evaluation code"""
-    #     with torch.no_grad():
-    #         total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
-    #         self.model.eval()
-    #         for images, targets in val_loader:
-    #             # Forward old model
-    #             targets_old = None
-    #             if t > 0:
-    #                 targets_old = self.model_old(images.to(self.device))
-    #             # Forward current model
-    #             outputs = self.model(images.to(self.device))
-    #             loss = self.criterion(t, outputs, targets.to(self.device), targets_old)
-    #             hits_taw, hits_tag = self.calculate_metrics(outputs, targets)
-    #             # Log
-    #             total_loss += loss.data.cpu().numpy().item() * len(targets)
-    #             total_acc_taw += hits_taw.sum().data.cpu().numpy().item()
-    #             total_acc_tag += hits_tag.sum().data.cpu().numpy().item()
-    #             total_num += len(targets)
-    #     return total_loss / total_num, total_acc_taw / total_num, total_acc_tag / total_num
