@@ -177,7 +177,7 @@ class Appr(Inc_Learning_Appr):
 
                 # Apply calibration if available and fitted
                 if self.calibrator and self.calibrator.is_fitted(t):
-                    print(f"***CALIBRATION MODE*** Task ID: {t}")
+                    # print(f"***CALIBRATION MODE*** Task ID: {t}")
                     probabilities = self.calibrator.predict_proba(logits, t, device=self.device)
                     for i, prob in enumerate(probabilities):
                         print(f"Probability {i} after calibration: {prob[:5]}")
@@ -190,8 +190,6 @@ class Appr(Inc_Learning_Appr):
                 total_acc_taw += hits_taw.sum().item()
                 total_acc_tag += hits_tag.sum().item()
                 total_num += len(targets)
-
-                print(f"Task {t}, Hits TAw: {hits_taw.sum().item()}, Hits TAg: {hits_tag.sum().item()}")
 
         return total_loss / total_num, total_acc_taw / total_num, total_acc_tag / total_num
 

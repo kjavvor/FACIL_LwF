@@ -5,6 +5,8 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.isotonic import IsotonicRegression
 import numpy as np
 import torch.optim as optim
+from sklearn.utils.validation import check_is_fitted
+from sklearn.exceptions import NotFittedError
 
 
 class TemperatureScaling(nn.Module):
@@ -69,10 +71,16 @@ class EnsembleTemperatureScaling:
 
     def is_fitted(self, task_id):
         """Check if models for a specific task are fitted."""
-        if self.task_models is None:
-            return False
         if len(self.models) < task_id + 1:
             return False
+
+        for model in self.models[task_id]:
+            if model is not None:
+                try:
+                    check_is_fitted(model)
+                except NotFittedError:
+                    print('NO')
+                    return False
         return True
 
 class PlattScaling:
@@ -87,26 +95,34 @@ class PlattScaling:
         self.task_models = [LogisticRegression() for _ in range(self.num_classes)]
         for i in range(self.num_classes):
             class_logits = logits[:, i].reshape(-1, 1)
-            class_labels = (labels == i).astype(int)
-            if len(np.unique(class_labels)) > 1:
+            # print("Labels:", labels)
+            class_labels = (labels == i + task_id * self.num_classes).astype(int)
+            # print("Class labels:", class_labels)
+            unique_labels = np.unique(class_labels)
+            # print(f"Task {task_id}, Class {i}, Unique labels: {unique_labels}")
+            if len(unique_labels) > 1:
                 self.task_models[i].fit(class_logits, class_labels)
             else:
+                print(f"Task {task_id}, Class {i}, Single unique label: {unique_labels}")
                 self.task_models[i] = None  # Handle single class by not fitting model
         # Ensure we have enough lists to cover all tasks up to task_id
         while len(self.models) <= task_id:
             self.models.append(None)
         self.models[task_id] = self.task_models
 
-        # print(f"Number of models for task {task_id}: {len(self.models[task_id])}")
+        # print(f"Number of models for task {task_id}: {len(self.task_models)}")
         # print("Len models: ", len(self.models))
         # print(f"Total number of models: {sum(len(models) for models in self.models if models is not None)}")
         # print(f"Set num_classes to: {self.num_classes}")
+        # print(f"Models for task {task_id}: {self.task_models}")
 
     def predict_proba(self, logits, task_id, device):
         if not self.is_fitted(task_id):
             raise RuntimeError(f"Models for task {task_id} have not been fitted yet.")
 
         task_models = self.models[task_id]
+        # print(f'Models', self.models)
+        # print(f'task models', task_models)
         probas_list = []
 
         for logit in logits:
@@ -120,6 +136,7 @@ class PlattScaling:
                 if model is not None:
                     probas[:, i] = model.predict_proba(logit_np[:, i].reshape(-1, 1))[:, 1]
                 else:
+                    print(f"Task {task_id}, Model {i} is None")
                     probas[:, i] = 1.0  # Default to 100% probability if only one class was available during fit
 
             probas_tensor = torch.tensor(probas, dtype=torch.float32, device=device)
@@ -129,22 +146,16 @@ class PlattScaling:
 
     def is_fitted(self, task_id):
         """Check if models for a specific task are fitted."""
-        # Ensure that the number of models corresponds to the number of tasks and classes
-        # if self.num_classes is None:
-        #     print("num_classes is None, returning False")
-        #     return False
-        # total_models = sum(len(models) for models in self.models if models is not None)
-        # expected_models = (task_id + 1) * self.num_classes
-        # print(f"Total models: {total_models}, Expected models: {expected_models}, Num classes: {self.num_classes}")
-        # if self.task_models is None:
-        #     return False
-        # elif total_models < expected_models:
-        #     return False
-        # return True
-        if self.task_models is None:
-            return False
         if len(self.models) < task_id + 1:
             return False
+
+        for model in self.models[task_id]:
+            if model is not None:
+                try:
+                    check_is_fitted(model)
+                except NotFittedError:
+                    print('NO')
+                    return False
         return True
 class IsotonicCalibration:
     def __init__(self):
@@ -157,7 +168,7 @@ class IsotonicCalibration:
         self.num_classes = logits.shape[1]
         self.task_models = [IsotonicRegression(out_of_bounds='clip') for _ in range(self.num_classes)]
         for i in range(self.num_classes):
-            self.task_models[i].fit(logits[:, i], (labels == i).astype(float))
+            self.task_models[i].fit(logits[:, i], (labels == i + task_id * self.num_classes).astype(float))
         # Ensure we have enough lists to cover all tasks up to task_id
         while len(self.models) <= task_id:
             self.models.append(None)
@@ -169,11 +180,16 @@ class IsotonicCalibration:
 
     def is_fitted(self, task_id):
         """Check if models for a specific task are fitted."""
-        # print(f'len models:', {len(self.models)})
-        if self.task_models is None:
+        if len(self.models) < task_id + 1:
             return False
-        elif len(self.models) < (task_id + 1):
-            return False
+
+        for model in self.models[task_id]:
+            if model is not None:
+                try:
+                    check_is_fitted(model)
+                except NotFittedError:
+                    print('NO')
+                    return False
         return True
 
     def predict_proba(self, logits, task_id, device):
