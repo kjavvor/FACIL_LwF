@@ -65,7 +65,7 @@ def main(argv=None):
     # training args
     parser.add_argument('--approach', default='lwf', type=str, choices=approach.__all__,
                     help='Learning approach used (default=%(default)s)', metavar="APPROACH")
-    parser.add_argument('--nepochs', default=2, type=int, required=False,
+    parser.add_argument('--nepochs', default=200, type=int, required=False,
                         help='Number of epochs per training session (default=%(default)s)')
     parser.add_argument('--lr', default=0.1, type=float, required=False,
                         help='Starting learning rate (default=%(default)s)')

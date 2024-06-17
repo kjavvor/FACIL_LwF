@@ -96,7 +96,7 @@ class Appr(Inc_Learning_Appr):
         self.model_old.freeze_all()
         print(f"Model_old updated after task {t}")
 
-        print("Training with calibration" if self.calibrate else "Training without calibration")
+        print(f"Training with {self.calibration_method} calibration" if self.calibrate and self.calibration_method else f"Training without calibration")
         # Collect logits and labels from the validation set for calibration
         if self.calibrator and self.calibration_method:
             logits, labels = self.collect_logits_labels(val_loader)
@@ -108,7 +108,6 @@ class Appr(Inc_Learning_Appr):
                 self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy(), t)
 
         super().post_train_process(t, trn_loader, val_loader)
-
 
     def collect_logits_labels(self, loader):
         """Collect logits and labels from the loader for calibration purposes."""
@@ -122,15 +121,14 @@ class Appr(Inc_Learning_Appr):
 
                 # Check if logits are in a list and unwrap if necessary
                 if isinstance(logits, list) and all(isinstance(l, torch.Tensor) for l in logits):
-                    logits = logits[0]  # Assuming there's only one tensor in the list
+                    for logit in logits:
+                        all_logits.append(logit.detach())
+                    all_labels.append(targets.repeat(len(logits)).detach())
+                else:
+                    all_logits.append(logits.detach())
+                    all_labels.append(targets.detach())
 
-                all_logits.append(logits.detach())
-                all_labels.append(targets.detach())
-
-        if len(all_logits) == 0:
-            return torch.tensor([]), torch.tensor([])
-
-        return torch.cat(all_logits), torch.cat(all_labels)
+        return torch.cat(all_logits, dim=0), torch.cat(all_labels, dim=0)
 
     def train_epoch(self, t, trn_loader):
         """Runs a single epoch"""
@@ -153,43 +151,67 @@ class Appr(Inc_Learning_Appr):
 
     def eval(self, t, val_loader):
         """Evaluation without applying real-time calibration; used during training."""
+        # all_pre_calibration_probs = []
+        # all_post_calibration_probs = []
+        # all_labels = []
         with torch.no_grad():
             total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
             self.model.eval()
             for images, targets in val_loader:
-                images = images.to(self.device)
-                targets = targets.to(self.device)
-
-                # Forward old model
                 targets_old = None
                 if t > 0:
                     targets_old = self.model_old(images.to(self.device))
 
-                # Forward current model
-                logits = self.model(images)
+                logits = self.model(images.to(self.device))
+                loss = self.criterion(t, logits, targets.to(self.device), targets_old)
 
-                # Debugging information
-                print(f"Task {t}, Logits from model: {logits[:5]}")
-                print(f"Task {t}, Targets: {targets[:5]}")
+                # logits_cpu = [logit_tensor.cpu().numpy() for logit_tensor in logits]
+                # probabilities = torch.nn.functional.softmax(logits, dim=1).cpu().numpy()
+                # all_pre_calibration_probs.append(logits_cpu)  # Save pre-calibration probabilities
+                # all_labels.append(targets.cpu().numpy())
 
-                # Compute loss using logits (calibration does not affect loss calculation)
-                loss = self.criterion(t, logits, targets, targets_old)
-
-                # Apply calibration if available and fitted
                 if self.calibrator and self.calibrator.is_fitted(t):
-                    # print(f"***CALIBRATION MODE*** Task ID: {t}")
                     probabilities = self.calibrator.predict_proba(logits, t, device=self.device)
-                    for i, prob in enumerate(probabilities):
-                        print(f"Probability {i} after calibration: {prob[:5]}")
-                    hits_taw, hits_tag = self.calculate_metrics(probabilities, targets)
+                    # prob_cpu = [prob_tensor.cpu().numpy() for prob_tensor in probabilities]
+                    # all_post_calibration_probs.append(prob_cpu)  # Save post-calibration probabilities
                 else:
-                    hits_taw, hits_tag = self.calculate_metrics(logits, targets)
+                    probabilities = logits
+                    # all_post_calibration_probs.append(probabilities)  # If no calibration, use the same probabilities
+
+                hits_taw, hits_tag = self.calculate_metrics(probabilities, targets)
 
                 # Accumulate metrics
-                total_loss += loss.item() * len(targets)
-                total_acc_taw += hits_taw.sum().item()
-                total_acc_tag += hits_tag.sum().item()
+                total_loss += loss.data.cpu().numpy().item() * len(targets)
+                total_acc_taw += hits_taw.sum().data.cpu().numpy().item()
+                total_acc_tag += hits_tag.sum().data.cpu().numpy().item()
                 total_num += len(targets)
+
+
+        # if all_pre_calibration_probs:
+        #     all_pre_calibration_probs = [item for sublist in all_pre_calibration_probs for item in sublist]
+        #     if all(isinstance(x, np.ndarray) for x in all_pre_calibration_probs):
+        #         all_pre_calibration_probs = np.concatenate(all_pre_calibration_probs, axis=0)
+        #         all_labels = np.concatenate(all_labels)
+        #
+        #         print('***Plot generation for pre-calibration begins***')
+        #         self.calibrator.plot_calibration_curve(all_pre_calibration_probs, all_labels, t,
+        #                                                save_plot=True, directory='../calibration_plots',
+        #                                                calibration_stage='pre')
+        #     else:
+        #         print("Not all entries in probability lists are numpy arrays.")
+
+        # if all_post_calibration_probs:
+        #     all_post_calibration_probs = [item for sublist in all_post_calibration_probs for item in sublist]
+        #     if all(isinstance(x, np.ndarray) for x in all_post_calibration_probs):
+        #         all_post_calibration_probs = np.concatenate(all_post_calibration_probs, axis=0)
+        #         all_labels = np.concatenate(all_labels)
+        #
+        #         print('***Plot generation for post-calibration begins***')
+        #         self.calibrator.plot_calibration_curve(all_post_calibration_probs, all_labels, t,
+        #                                                save_plot=True, directory='../calibration_plots',
+        #                                                calibration_stage='post')
+        #     else:
+        #         print("Not all entries in probability lists are numpy arrays.")
 
         return total_loss / total_num, total_acc_taw / total_num, total_acc_tag / total_num
 

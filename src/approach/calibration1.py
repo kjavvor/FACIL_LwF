@@ -7,6 +7,11 @@ import numpy as np
 import torch.optim as optim
 from sklearn.utils.validation import check_is_fitted
 from sklearn.exceptions import NotFittedError
+from sklearn.calibration import calibration_curve, CalibrationDisplay
+from sklearn.metrics import brier_score_loss
+import matplotlib.pyplot as plt
+import os
+import scipy
 
 
 class TemperatureScaling(nn.Module):
@@ -31,7 +36,7 @@ class TemperatureScaling(nn.Module):
         optimizer.step(step)
 
 class EnsembleTemperatureScaling:
-    def __init__(self, num_models=5):
+    def __init__(self, num_models=20):
         self.models = []
         self.num_models = num_models
         self.task_models = []
@@ -63,7 +68,7 @@ class EnsembleTemperatureScaling:
         mean_probas_list = []
         with torch.no_grad():
             for logit in logits:
-                scaled_logit = [model(logit) for model in self.models]
+                scaled_logit = [model(logit) for model in task_models]
                 scaled_probs = [nn.functional.softmax(l, dim=1) for l in scaled_logit]
                 mean_probs = torch.mean(torch.stack(scaled_probs), dim=0)
                 mean_probas_list.append(mean_probs.to(device))
@@ -110,6 +115,20 @@ class PlattScaling:
             self.models.append(None)
         self.models[task_id] = self.task_models
 
+        fraction_of_positives, mean_predicted_value = calibration_curve(labels, logits, n_bins=5, normalize=True)
+
+        # Plot the calibration curve
+        plt.figure(figsize=(8, 6))
+        plt.plot(mean_predicted_value, fraction_of_positives, "s-", label='Calibration (model)')
+
+        # Add reference line
+        plt.plot([0, 1], [0, 1], "k:", label='Perfectly calibrated')
+        plt.ylabel('Fraction of positives')
+        plt.xlabel('Mean predicted probability')
+        plt.title('Calibration Curve')
+        plt.legend()
+        plt.show()
+
         # print(f"Number of models for task {task_id}: {len(self.task_models)}")
         # print("Len models: ", len(self.models))
         # print(f"Total number of models: {sum(len(models) for models in self.models if models is not None)}")
@@ -124,6 +143,7 @@ class PlattScaling:
         # print(f'Models', self.models)
         # print(f'task models', task_models)
         probas_list = []
+        # print(f"Task {task_id}: logits len: {len(logits)}")
 
         for logit in logits:
             if logit.is_cuda:
@@ -174,10 +194,6 @@ class IsotonicCalibration:
             self.models.append(None)
         self.models[task_id] = self.task_models
 
-        # Print the number of models per task and the total number of models
-        print(f"Number of models for task {task_id}: {len(self.task_models)}")
-        print(f"Total number of models: {sum(len(models) for models in self.models if models is not None)}")
-
     def is_fitted(self, task_id):
         """Check if models for a specific task are fitted."""
         if len(self.models) < task_id + 1:
@@ -212,3 +228,34 @@ class IsotonicCalibration:
 
         return probas_list
 
+    def plot_calibration_curve(self, y_probs, y_true, task_id, save_plot=False, directory='../calibration_plots', calibration_stage='pre'):
+        if y_probs.ndim < 2:
+            raise ValueError(f"Expected y_probs to be 2D, got shape {y_probs.shape}")
+
+        num_classes = y_probs.shape[1]  # Confirm this matches the expected number of classes
+
+        os.makedirs(directory, exist_ok=True)  # Ensure directory exists
+
+        for class_index in range(task_id * num_classes, (task_id + 1) * num_classes):
+            class_probs = y_probs[:, class_index]
+            class_true = (y_true == class_index).astype(int)
+
+            prob_true, prob_pred = calibration_curve(class_true, class_probs, n_bins=10)
+            brier_score = brier_score_loss(class_true, class_probs)
+
+            plt.figure()
+            disp = CalibrationDisplay(prob_true=prob_true, prob_pred=prob_pred, y_prob=class_probs, estimator_name=f'Class {class_index}')
+            disp.plot()
+            plt.title(
+                f'{calibration_stage.capitalize()} Calibration Curve for Class {class_index} (Brier: {brier_score:.4f})')
+            file_path = os.path.join(directory,
+                                     f'{calibration_stage}_calibration_curve_task_{task_id}_class_{class_index}.png')
+
+            if save_plot:
+                plt.savefig(file_path)
+                plt.close()
+                print(f"Plot saved to {file_path}")
+            else:
+                plt.show()
+
+            print(f"Calibration analysis for class {class_index} completed.")
