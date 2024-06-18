@@ -2,7 +2,11 @@ import torch
 from copy import deepcopy
 from argparse import ArgumentParser
 import numpy as np
-import traceback
+import os
+from sklearn.calibration import calibration_curve, CalibrationDisplay
+from sklearn.metrics import brier_score_loss
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 import sys
 sys.path.append('D:\studia\zzsn\ZZSN\FACIL_LwF\src')
@@ -41,6 +45,7 @@ class Appr(Inc_Learning_Appr):
                 self.calibrator = IsotonicCalibration()
             else:
                 self.calibrator = None
+        self.plots_on = None
 
     @staticmethod
     def exemplars_dataset_class():
@@ -106,6 +111,7 @@ class Appr(Inc_Learning_Appr):
                 self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy(), t)
             elif self.calibration_method == 'isotonic':
                 self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy(), t)
+        self.plots_on = t
 
         super().post_train_process(t, trn_loader, val_loader)
 
@@ -151,9 +157,8 @@ class Appr(Inc_Learning_Appr):
 
     def eval(self, t, val_loader):
         """Evaluation without applying real-time calibration; used during training."""
-        # all_pre_calibration_probs = []
-        # all_post_calibration_probs = []
-        # all_labels = []
+        all_post_calibration_probs = []
+        all_labels = []
         with torch.no_grad():
             total_loss, total_acc_taw, total_acc_tag, total_num = 0, 0, 0, 0
             self.model.eval()
@@ -162,21 +167,18 @@ class Appr(Inc_Learning_Appr):
                 if t > 0:
                     targets_old = self.model_old(images.to(self.device))
 
+                all_labels.append(targets.cpu().numpy())
                 logits = self.model(images.to(self.device))
                 loss = self.criterion(t, logits, targets.to(self.device), targets_old)
 
-                # logits_cpu = [logit_tensor.cpu().numpy() for logit_tensor in logits]
-                # probabilities = torch.nn.functional.softmax(logits, dim=1).cpu().numpy()
-                # all_pre_calibration_probs.append(logits_cpu)  # Save pre-calibration probabilities
-                # all_labels.append(targets.cpu().numpy())
-
                 if self.calibrator and self.calibrator.is_fitted(t):
                     probabilities = self.calibrator.predict_proba(logits, t, device=self.device)
-                    # prob_cpu = [prob_tensor.cpu().numpy() for prob_tensor in probabilities]
-                    # all_post_calibration_probs.append(prob_cpu)  # Save post-calibration probabilities
+                    prob_cpu = [prob_tensor.cpu().numpy() for prob_tensor in probabilities]
+                    all_post_calibration_probs.append(prob_cpu)  # Save post-calibration probabilities
                 else:
                     probabilities = logits
-                    # all_post_calibration_probs.append(probabilities)  # If no calibration, use the same probabilities
+                    prob_cpu = [prob_tensor.cpu().numpy() for prob_tensor in probabilities]
+                    all_post_calibration_probs.append(prob_cpu)  # If no calibration, use the same probabilities
 
                 hits_taw, hits_tag = self.calculate_metrics(probabilities, targets)
 
@@ -186,32 +188,29 @@ class Appr(Inc_Learning_Appr):
                 total_acc_tag += hits_tag.sum().data.cpu().numpy().item()
                 total_num += len(targets)
 
+        if all_post_calibration_probs and self.plots_on == t:
+            all_post_calibration_probs = [item for sublist in all_post_calibration_probs for item in sublist]
+            if all(isinstance(x, np.ndarray) for x in all_post_calibration_probs):
+                print(f'all_post_calibration_probs length= {len(all_post_calibration_probs)}')
+                print(f'all_post_calibration_probs length [0]= {len(all_post_calibration_probs[0])}')
+                print(f'all_post_calibration_probs length [0][0]= {len(all_post_calibration_probs[0][0])}')
+                print(f'all_labels length= {len(all_labels)}')
+                print(f'all_labels length [0]= {len(all_labels[0])}')
+                all_post_calibration_probs = np.concatenate(all_post_calibration_probs, axis=0)
+                all_labels = np.concatenate(all_labels)
 
-        # if all_pre_calibration_probs:
-        #     all_pre_calibration_probs = [item for sublist in all_pre_calibration_probs for item in sublist]
-        #     if all(isinstance(x, np.ndarray) for x in all_pre_calibration_probs):
-        #         all_pre_calibration_probs = np.concatenate(all_pre_calibration_probs, axis=0)
-        #         all_labels = np.concatenate(all_labels)
-        #
-        #         print('***Plot generation for pre-calibration begins***')
-        #         self.calibrator.plot_calibration_curve(all_pre_calibration_probs, all_labels, t,
-        #                                                save_plot=True, directory='../calibration_plots',
-        #                                                calibration_stage='pre')
-        #     else:
-        #         print("Not all entries in probability lists are numpy arrays.")
+                min_length = min(len(all_post_calibration_probs), len(all_labels))
+                all_post_calibration_probs = all_post_calibration_probs[-min_length:]
 
-        # if all_post_calibration_probs:
-        #     all_post_calibration_probs = [item for sublist in all_post_calibration_probs for item in sublist]
-        #     if all(isinstance(x, np.ndarray) for x in all_post_calibration_probs):
-        #         all_post_calibration_probs = np.concatenate(all_post_calibration_probs, axis=0)
-        #         all_labels = np.concatenate(all_labels)
-        #
-        #         print('***Plot generation for post-calibration begins***')
-        #         self.calibrator.plot_calibration_curve(all_post_calibration_probs, all_labels, t,
-        #                                                save_plot=True, directory='../calibration_plots',
-        #                                                calibration_stage='post')
-        #     else:
-        #         print("Not all entries in probability lists are numpy arrays.")
+                calibration_method = self.calibration_method if self.calibrator and self.calibrator.is_fitted(
+                    t) else None
+                self.plot_calibration_curve(all_post_calibration_probs, all_labels, t,
+                                            calibration_method=calibration_method,
+                                            save_plot=True, directory='../calibration_plots')
+            else:
+                print("Not all entries in probability lists are numpy arrays.")
+        else:
+            print("No post calibration probabilities available.")
 
         return total_loss / total_num, total_acc_taw / total_num, total_acc_tag / total_num
 
@@ -244,12 +243,50 @@ class Appr(Inc_Learning_Appr):
         # Current cross-entropy loss -- with exemplars use all heads
         targets = targets.long()
 
-        # print("Debugging Info:")
-        # print(f"Outputs tensor shape: {outputs.shape}")
-        # print(f"Targets shape: {targets.shape}")
-        # print(f"Outputs tensor type: {outputs.dtype}, device: {outputs.device}")
-        # print(f"Targets type: {targets.dtype}, device: {targets.device}")
-
         if len(self.exemplars_dataset) > 0:
             return loss + torch.nn.functional.cross_entropy(torch.cat(outputs, dim=1), targets)
         return loss + torch.nn.functional.cross_entropy(outputs[t], targets - self.model.task_offset[t])
+
+    def plot_calibration_curve(self, y_probs, y_true, task_id, calibration_method, save_plot=False,
+                               directory='../calibration_plots'):
+        if y_probs.ndim < 2:
+            raise ValueError(f"Expected y_probs to be 2D, got shape {y_probs.shape}")
+
+        num_classes = y_probs.shape[1]  # Confirm this matches the expected number of classes
+
+        os.makedirs(directory, exist_ok=True)  # Ensure directory exists
+
+        if np.any(y_probs < 0) or np.any(y_probs > 1):
+            y_probs = F.softmax(torch.tensor(y_probs), dim=1).numpy()
+
+        combined_probs = []
+        combined_true = []
+
+        for class_index in range(num_classes):
+            class_probs = y_probs[:, class_index]
+            class_true = (y_true == class_index + task_id * num_classes).astype(int)
+
+            combined_probs.extend(class_probs)
+            combined_true.extend(class_true)
+
+        combined_probs = np.array(combined_probs)
+        combined_true = np.array(combined_true)
+
+        prob_true, prob_pred = calibration_curve(combined_true, combined_probs, n_bins=10)
+        brier_score = brier_score_loss(combined_true, combined_probs)
+
+        plt.figure()
+        disp = CalibrationDisplay(prob_true=prob_true, prob_pred=prob_pred, y_prob=combined_probs,
+                                  estimator_name=f'Calibration Method: {calibration_method}')
+        disp.plot()
+        plt.title(f'Calibration Curve (Brier: {brier_score:.4f}) - Task {task_id} - Method: {calibration_method}')
+        file_path = os.path.join(directory, f'calibration_curve_task_{task_id}_method_{calibration_method}.png')
+
+        if save_plot:
+            plt.savefig(file_path)
+            plt.close()
+            print(f"Plot saved to {file_path}")
+        else:
+            plt.show()
+
+        print(f"Calibration analysis for task {task_id} with method {calibration_method} completed.")

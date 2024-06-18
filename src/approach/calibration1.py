@@ -109,7 +109,6 @@ class EnsembleTemperatureScaling:
         return True
 
 
-
 class PlattScaling:
     def __init__(self):
         self.models = []
@@ -173,6 +172,7 @@ class PlattScaling:
                     print('NO')
                     return False
         return True
+
 class IsotonicCalibration:
     def __init__(self):
         self.models = []
@@ -223,35 +223,3 @@ class IsotonicCalibration:
             probas_list.append(probas_tensor)
 
         return probas_list
-
-    def plot_calibration_curve(self, y_probs, y_true, task_id, save_plot=False, directory='../calibration_plots', calibration_stage='pre'):
-        if y_probs.ndim < 2:
-            raise ValueError(f"Expected y_probs to be 2D, got shape {y_probs.shape}")
-
-        num_classes = y_probs.shape[1]  # Confirm this matches the expected number of classes
-
-        os.makedirs(directory, exist_ok=True)  # Ensure directory exists
-
-        for class_index in range(task_id * num_classes, (task_id + 1) * num_classes):
-            class_probs = y_probs[:, class_index]
-            class_true = (y_true == class_index).astype(int)
-
-            prob_true, prob_pred = calibration_curve(class_true, class_probs, n_bins=10)
-            brier_score = brier_score_loss(class_true, class_probs)
-
-            plt.figure()
-            disp = CalibrationDisplay(prob_true=prob_true, prob_pred=prob_pred, y_prob=class_probs, estimator_name=f'Class {class_index}')
-            disp.plot()
-            plt.title(
-                f'{calibration_stage.capitalize()} Calibration Curve for Class {class_index} (Brier: {brier_score:.4f})')
-            file_path = os.path.join(directory,
-                                     f'{calibration_stage}_calibration_curve_task_{task_id}_class_{class_index}.png')
-
-            if save_plot:
-                plt.savefig(file_path)
-                plt.close()
-                print(f"Plot saved to {file_path}")
-            else:
-                plt.show()
-
-            print(f"Calibration analysis for class {class_index} completed.")
