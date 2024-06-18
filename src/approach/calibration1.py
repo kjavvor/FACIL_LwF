@@ -1,96 +1,118 @@
 import torch
-from torch import nn
 import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
 from sklearn.isotonic import IsotonicRegression
 import numpy as np
-import torch.optim as optim
 from sklearn.utils.validation import check_is_fitted
 from sklearn.exceptions import NotFittedError
 from sklearn.calibration import calibration_curve, CalibrationDisplay
 from sklearn.metrics import brier_score_loss
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize
 import os
-import scipy
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 
-class TemperatureScaling(nn.Module):
+class TemperatureScaling:
     def __init__(self):
-        super(TemperatureScaling, self).__init__()
-        self.temperature = nn.Parameter(torch.ones(1))
+        self.temperature = 1.0
+        self.is_fitted_flag = False
 
-    def forward(self, logits):
+    def fit(self, logits, labels, num_classes):
+        logits = np.asarray(logits)
+        labels = np.asarray(labels).astype(int)
+        if labels.min() < 0 or labels.max() >= num_classes:
+            raise ValueError(f"Labels are out of bounds. Should be in range [0, {num_classes - 1}]")
+
+        def loss_fn(temp):
+            temp_logits = logits / temp
+            temp_logits = np.hstack([1 - temp_logits, temp_logits])  # ensure shape (N, 2) for binary classification
+            loss = F.cross_entropy(torch.tensor(temp_logits, dtype=torch.float32),
+                                   torch.tensor(labels, dtype=torch.long))
+            return loss.item()
+
+        res = minimize(loss_fn, x0=[self.temperature], bounds=[(0.5, 5.0)], method='L-BFGS-B')
+        self.temperature = res.x[0]
+        self.is_fitted_flag = True
+
+    def transform(self, logits):
+        logits = np.asarray(logits)
         return logits / self.temperature
 
-    def fit(self, logits, labels):
-        self.to(logits.device)
-        optimizer = optim.LBFGS([self.temperature], lr=0.01, max_iter=50)
-        criterion = nn.CrossEntropyLoss()
+    def predict_proba(self, logits):
+        temp_logits = self.transform(logits)
+        temp_logits = np.hstack([1 - temp_logits, temp_logits])
+        exp_logits = np.exp(temp_logits - np.max(temp_logits, axis=1, keepdims=True))
+        return exp_logits / np.sum(exp_logits, axis=1, keepdims=True)
 
-        def step():
-            optimizer.zero_grad()
-            loss = criterion(self.forward(logits), labels)
-            loss.backward()
-            return loss
+    def is_fitted(self):
+        return self.is_fitted_flag
 
-        optimizer.step(step)
 
 class EnsembleTemperatureScaling:
-    def __init__(self, num_models=20):
+    def __init__(self):
         self.models = []
-        self.num_models = num_models
-        self.task_models = []
         self.num_classes = None
 
     def fit(self, logits, labels, task_id):
-        self.task_models = [TemperatureScaling() for _ in range(self.num_models)]
-        subsets = torch.chunk(logits, self.num_models, dim=0)
-        label_subsets = torch.chunk(labels, self.num_models, dim=0)
+        """Fit calibrator fro a specific task"""
+        self.num_classes = logits.shape[1]
+        task_models = [TemperatureScaling() for _ in range(self.num_classes)]
 
-        for model, subset, label_subset in zip(self.task_models, subsets, label_subsets):
-            print(f"Fitting model with logits shape {subset.shape} and labels shape {label_subset.shape}")
-            print(f"Label range: {label_subset.min()} to {label_subset.max()}")
-            model.fit(subset, label_subset)
+        for i in range(self.num_classes):
+            class_logits = logits[:, [i]]  # Ensure logits have shape (N, 1)
+            class_labels = (labels == i + task_id * self.num_classes).astype(int)
+            unique_labels = np.unique(class_labels)
+
+            if class_labels.min() < 0 or class_labels.max() > 1:
+                raise ValueError("Binary class labels should be 0 or 1.")
+
+            if len(unique_labels) > 1:
+                task_models[i].fit(class_logits, class_labels, 2)
+            else:
+                task_models[i] = None
 
         while len(self.models) <= task_id:
             self.models.append(None)
-        self.models[task_id] = self.task_models
-
-        print(f"Number of models for task {task_id}: {len(self.task_models)}")
-        print(f"Total number of models: {sum(len(models) for models in self.models if models is not None)}")
+        self.models[task_id] = task_models
 
     def predict_proba(self, logits, task_id, device):
-        # Apply each model's scaling and average the results
-        if self.task_models is None:
-            return False
+        """"Predict probabilities for logits for a specific task identified by task_id."""
+        if not self.is_fitted(task_id):
+            raise RuntimeError(f"Models for task {task_id} have not been fitted yet.")
 
         task_models = self.models[task_id]
-        mean_probas_list = []
-        with torch.no_grad():
-            for logit in logits:
-                scaled_logit = [model(logit) for model in task_models]
-                scaled_probs = [nn.functional.softmax(l, dim=1) for l in scaled_logit]
-                mean_probs = torch.mean(torch.stack(scaled_probs), dim=0)
-                mean_probas_list.append(mean_probs.to(device))
-        return mean_probas_list
+        probas_list = []
+        for logit in logits:
+            if logit.is_cuda:
+                logit = logit.cpu()
+
+            logit_np = logit.numpy()
+            probas = np.zeros((logit_np.shape[0], len(task_models)))
+            for i, model in enumerate(task_models):
+                if model is not None:
+                    probas[:, i] = model.predict_proba(logit_np[:, [i]])[:, 1]
+                else:
+                    probas[:, i] = 1.0
+            probas_tensor = torch.tensor(probas, dtype=torch.float32, device=device)
+            probas_list.append(probas_tensor)
+        return probas_list
 
     def is_fitted(self, task_id):
-        """Check if models for a specific task are fitted."""
         if len(self.models) < task_id + 1:
             return False
 
         for model in self.models[task_id]:
             if model is not None:
-                try:
-                    check_is_fitted(model)
-                except NotFittedError:
-                    print('NO')
+                if not model.is_fitted():
                     return False
         return True
 
+
+
 class PlattScaling:
     def __init__(self):
-        self.models = []  # This will now be a list of lists, each containing models for a specific task
+        self.models = []
         self.num_classes = None
         self.task_models = None
 
@@ -100,56 +122,30 @@ class PlattScaling:
         self.task_models = [LogisticRegression() for _ in range(self.num_classes)]
         for i in range(self.num_classes):
             class_logits = logits[:, i].reshape(-1, 1)
-            # print("Labels:", labels)
             class_labels = (labels == i + task_id * self.num_classes).astype(int)
-            # print("Class labels:", class_labels)
             unique_labels = np.unique(class_labels)
-            # print(f"Task {task_id}, Class {i}, Unique labels: {unique_labels}")
             if len(unique_labels) > 1:
                 self.task_models[i].fit(class_logits, class_labels)
             else:
                 print(f"Task {task_id}, Class {i}, Single unique label: {unique_labels}")
-                self.task_models[i] = None  # Handle single class by not fitting model
-        # Ensure we have enough lists to cover all tasks up to task_id
+                self.task_models[i] = None
         while len(self.models) <= task_id:
             self.models.append(None)
         self.models[task_id] = self.task_models
 
-        fraction_of_positives, mean_predicted_value = calibration_curve(labels, logits, n_bins=5, normalize=True)
-
-        # Plot the calibration curve
-        plt.figure(figsize=(8, 6))
-        plt.plot(mean_predicted_value, fraction_of_positives, "s-", label='Calibration (model)')
-
-        # Add reference line
-        plt.plot([0, 1], [0, 1], "k:", label='Perfectly calibrated')
-        plt.ylabel('Fraction of positives')
-        plt.xlabel('Mean predicted probability')
-        plt.title('Calibration Curve')
-        plt.legend()
-        plt.show()
-
-        # print(f"Number of models for task {task_id}: {len(self.task_models)}")
-        # print("Len models: ", len(self.models))
-        # print(f"Total number of models: {sum(len(models) for models in self.models if models is not None)}")
-        # print(f"Set num_classes to: {self.num_classes}")
-        # print(f"Models for task {task_id}: {self.task_models}")
 
     def predict_proba(self, logits, task_id, device):
+        """"Predict probabilities for logits for a specific task identified by task_id."""
         if not self.is_fitted(task_id):
             raise RuntimeError(f"Models for task {task_id} have not been fitted yet.")
 
         task_models = self.models[task_id]
-        # print(f'Models', self.models)
-        # print(f'task models', task_models)
         probas_list = []
-        # print(f"Task {task_id}: logits len: {len(logits)}")
-
         for logit in logits:
             if logit.is_cuda:
-                logit = logit.cpu()  # Move to CPU for compatibility with sklearn models
+                logit = logit.cpu()
 
-            logit_np = logit.numpy()  # Convert to numpy array for logistic regression
+            logit_np = logit.numpy()
 
             probas = np.zeros_like(logit_np)
             for i, model in enumerate(task_models):
@@ -157,7 +153,7 @@ class PlattScaling:
                     probas[:, i] = model.predict_proba(logit_np[:, i].reshape(-1, 1))[:, 1]
                 else:
                     print(f"Task {task_id}, Model {i} is None")
-                    probas[:, i] = 1.0  # Default to 100% probability if only one class was available during fit
+                    probas[:, i] = 1.0
 
             probas_tensor = torch.tensor(probas, dtype=torch.float32, device=device)
             probas_list.append(probas_tensor)
@@ -179,7 +175,7 @@ class PlattScaling:
         return True
 class IsotonicCalibration:
     def __init__(self):
-        self.models = []  # This will now be a list of lists, each containing models for a specific task
+        self.models = []
         self.num_classes = None
         self.task_models = None
 
@@ -189,7 +185,6 @@ class IsotonicCalibration:
         self.task_models = [IsotonicRegression(out_of_bounds='clip') for _ in range(self.num_classes)]
         for i in range(self.num_classes):
             self.task_models[i].fit(logits[:, i], (labels == i + task_id * self.num_classes).astype(float))
-        # Ensure we have enough lists to cover all tasks up to task_id
         while len(self.models) <= task_id:
             self.models.append(None)
         self.models[task_id] = self.task_models
@@ -209,6 +204,7 @@ class IsotonicCalibration:
         return True
 
     def predict_proba(self, logits, task_id, device):
+        """Predict probabilities based on given logits for a specific task identified by task_id."""
         if not self.is_fitted(task_id):
             raise RuntimeError(f"Models for task {task_id} have not been fitted yet.")
 

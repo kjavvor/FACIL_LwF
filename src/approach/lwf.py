@@ -34,7 +34,7 @@ class Appr(Inc_Learning_Appr):
         self.calibrator = None 
         if self.calibrate == 1:
             if self.calibration_method == 'temperature':
-                self.calibrator = EnsembleTemperatureScaling(num_models=20)
+                self.calibrator = EnsembleTemperatureScaling()
             elif self.calibration_method == 'platt':
                 self.calibrator = PlattScaling()
             elif self.calibration_method == 'isotonic':
@@ -101,7 +101,7 @@ class Appr(Inc_Learning_Appr):
         if self.calibrator and self.calibration_method:
             logits, labels = self.collect_logits_labels(val_loader)
             if self.calibration_method == 'temperature':
-                self.calibrator.fit(logits, labels.long(), t)
+                self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy(), t)
             elif self.calibration_method == 'platt':
                 self.calibrator.fit(logits.cpu().numpy(), labels.cpu().numpy(), t)
             elif self.calibration_method == 'isotonic':
